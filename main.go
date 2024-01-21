@@ -5,28 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/go-chi/chi"
+	"github.com/go-playground/validator"
+	"gitlab.goodsteam.tech/goRestExample/model"
 	"net/http"
 	"strconv"
 )
 
 const defaultLimit = 10
 
-type Artist struct {
-	ID    string   `json:"id"`    // id коллектива
-	Name  string   `json:"name"`  // название группы
-	Born  string   `json:"born"`  // год основания группы
-	Genre string   `json:"genre"` // жанр
-	Songs []string `json:"songs"` // популярные песни, это слайс строк, так как песен может быть несколько
-}
-
-type Filter struct {
-	Genre  string `json:"genre"`
-	Born   string `json:"born"`
-	Limit  int    `json:"limit"`
-	Offset int    `json:"offset"`
-}
-
-var artists = map[string]Artist{
+var artists = map[string]model.Artist{
 	"1": {
 		ID:    "1",
 		Name:  "30 Seconds To Mars",
@@ -64,9 +51,9 @@ var artists = map[string]Artist{
 	},
 }
 
-func validateArtistListRequest(r *http.Request) (*Filter, error) {
+func validateArtistListRequest(r *http.Request) (*model.Filter, error) {
 	var err error
-	var filter Filter
+	var filter model.Filter
 
 	limit := r.URL.Query().Get("limit")
 	if limit != "" {
@@ -118,11 +105,11 @@ func GetArtistList(w http.ResponseWriter, r *http.Request) {
 	w.Write(resp)
 }
 
-func getArtistList(filter *Filter) map[string]Artist {
+func getArtistList(filter *model.Filter) map[string]model.Artist {
 	// этот метод должен быть методом сервиса и под капотом обращаться за данным в storage.
-	// Atrist - структура доменной модели (бизнес логики). При походе в БД и возврате ответа целесообразно сделать отедельные dto,
+	// Artist - структура доменной модели (бизнес логики). При походе в БД и возврате ответа целесообразно сделать отедельные dto,
 	// куда нужно смапить данные из Artist
-	artistList := make([]Artist, 0)
+	artistList := make([]model.Artist, 0)
 	for _, artist := range artists {
 		if (filter.Genre == artist.Genre || filter.Genre == "") && (filter.Born == artist.Born || filter.Born == "") {
 			artistList = append(artistList, artist)
@@ -132,8 +119,8 @@ func getArtistList(filter *Filter) map[string]Artist {
 	return convertArtistsToMap(artistList)
 }
 
-func convertArtistsToMap(artistList []Artist) map[string]Artist {
-	artistListMap := make(map[string]Artist)
+func convertArtistsToMap(artistList []model.Artist) map[string]model.Artist {
+	artistListMap := make(map[string]model.Artist)
 	for _, artist := range artistList {
 		artistListMap[artist.ID] = artist
 	}
@@ -142,7 +129,7 @@ func convertArtistsToMap(artistList []Artist) map[string]Artist {
 }
 
 func SaveArtist(w http.ResponseWriter, r *http.Request) {
-	var artist Artist
+	var artist model.Artist
 	var buf bytes.Buffer
 
 	_, err := buf.ReadFrom(r.Body)
@@ -156,10 +143,27 @@ func SaveArtist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Println(artist)
+
+	validate := validator.New()
+	if err := validate.Struct(artist); err != nil {
+		validationErrors := err.(validator.ValidationErrors)
+		fmt.Println("validationErrors", validationErrors)
+		http.Error(w, fmt.Errorf("ошибка валидации запроса: %w", validationErrors).Error(), http.StatusBadRequest)
+		return
+	}
+
 	artists[artist.ID] = artist
 
+	respMsg := "Артист успешно сохранен"
+	resp, err := json.Marshal(respMsg)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+	w.Write(resp)
 }
 
 func GetArtist(w http.ResponseWriter, r *http.Request) {
@@ -183,6 +187,7 @@ func GetArtist(w http.ResponseWriter, r *http.Request) {
 }
 
 func getArtistSongs(w http.ResponseWriter, r *http.Request) {
+	// домашнее задание: сделать методы для добавления и удаления списка персен кокретного артиста.
 	id := chi.URLParam(r, "id")
 
 	artist, ok := artists[id]
@@ -207,10 +212,11 @@ func main() {
 	r := chi.NewRouter()
 
 	// делать одинаковые маршруты для разных методов (например POST и GET) можно, но я бы не советовал.
-	// в данном случае сделал как принято в спецификации api у нас в компании сущность/дейтсвие
-	r.Get("/artistList/get", GetArtistList)
+	// в данном случае сделал как принято в спецификации api у нас в компании: хвостик api -  сущность/дейтсвие
+	r.Get("/artist/list", GetArtistList)
 	r.Post("/artist/save", SaveArtist)
 	r.Get("/artist/{id}", GetArtist)
+	r.Get("/artist/{id}/song/list", getArtistSongs)
 
 	// запускаем сервер
 	if err := http.ListenAndServe(":8080", r); err != nil {
